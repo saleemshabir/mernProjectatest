@@ -4,11 +4,12 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const dns = require("dns");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const Event = require("./models/Event");
 const User = require("./models/User");
-const authMiddlewaren = require("./middleware/authMiddleware");
+const authMiddleware = require("./middleware/authMiddleware");
 
 const app = express();
 
@@ -17,246 +18,516 @@ app.use(express.json());
 
 dns.setServers(["8.8.8.8"]);
 
-// =======================
-// MongoDB Connection
-// =======================
+// ===============================
+// ENV CHECK
+// ===============================
 
-mongoose.connect(process.env.MONGO_URI)
-.then(() => {
-    console.log("MongoDB Connected Successfully!");
-})
-.catch((error) => {
-    console.log("MongoDB Connection Error: ", error);
-});
+console.log("JWT_SECRET loaded:", !!process.env.JWT_SECRET);
 
+// ===============================
+// MONGODB CONNECTION
+// ===============================
 
-// =======================
-// Home Route
-// =======================
+mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => {
+        console.log("MongoDB Connected Successfully!");
+    })
+    .catch((error) => {
+        console.log("MongoDB Connection Error:");
+        console.log(error.message);
+    });
+
+// ===============================
+// HOME
+// ===============================
 
 app.get("/", (req, res) => {
-    res.send("Backend is working");
+    res.json({
+        message: "Backend is working"
+    });
 });
 
+// ===============================
+// AUTH MIDDLEWARE
+// ===============================
 
-// =======================
-// GET ALL EVENTS
-// =======================
+function verifyToken(req, res, next) {
+
+    try {
+
+        const authHeader = req.headers.authorization;
+
+        console.log("Authorization Header:", authHeader);
+
+        if (!authHeader) {
+            return res.status(401).json({
+                message: "Token is missing"
+            });
+        }
+
+        if (!authHeader.startsWith("Bearer ")) {
+            return res.status(401).json({
+                message: "Invalid authorization format. Use Bearer token."
+            });
+        }
+
+        const token = authHeader.split(" ")[1];
+
+        if (!token) {
+            return res.status(401).json({
+                message: "Token is missing"
+            });
+        }
+
+        if (!process.env.JWT_SECRET) {
+            console.log("JWT_SECRET is missing!");
+
+            return res.status(500).json({
+                message: "JWT_SECRET is missing in .env"
+            });
+        }
+
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        console.log("Decoded Token:", decoded);
+
+        req.user = decoded;
+
+        next();
+
+    } catch (error) {
+
+        console.log("Token Verification Error:");
+        console.log(error.message);
+
+        return res.status(401).json({
+            message: "Invalid token",
+            error: error.message
+        });
+    }
+}
+
+// ===============================
+// EVENTS
+// ===============================
 
 app.get("/api/events", async (req, res) => {
+
     try {
+
         const events = await Event.find();
 
-        res.json(events);
+        res.status(200).json(events);
+
     } catch (error) {
-        console.log(error);
 
         res.status(500).json({
-            message: "Error fetching events"
+            message: "Error fetching events",
+            error: error.message
         });
     }
 });
 
-
-// =======================
+// ===============================
 // ADD EVENT
-// =======================
+// ===============================
 
-app.post("/api/events", authMiddlewaren, async (req, res) => {
+app.post("/api/events",authMiddleware, async (req, res) => {
+
     try {
+
         const newEvent = await Event.create(req.body);
 
-        res.json({
+        res.status(201).json({
             message: "Event Added Successfully!",
             event: newEvent
         });
+
     } catch (error) {
-        console.log(error);
 
         res.status(500).json({
-            message: "Error adding event"
+            message: "Error adding event",
+            error: error.message
         });
     }
 });
 
-
-// =======================
+// ===============================
 // UPDATE EVENT
-// =======================
+// ===============================
 
-app.put("/api/events/:id", async (req, res) => {
+app.put("/api/events/:id",authMiddleware, async (req, res) => {
+
     try {
-        const updatedEvent = await Event.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            { new: true }
-        );
+
+        const updatedEvent =
+            await Event.findByIdAndUpdate(
+                req.params.id,
+                req.body,
+                { new: true }
+            );
 
         if (!updatedEvent) {
+
             return res.status(404).json({
                 message: "Event Not Found!"
             });
         }
 
-        res.json({
+        res.status(200).json({
             message: "Event Updated Successfully!",
             event: updatedEvent
         });
+
     } catch (error) {
-        console.log(error);
 
         res.status(500).json({
-            message: "Error updating event"
+            message: "Error updating event",
+            error: error.message
         });
     }
 });
 
-
-// =======================
+// ===============================
 // DELETE EVENT
-// =======================
+// ===============================
 
-app.delete("/api/events/:id", async (req, res) => {
+app.delete("/api/events/:id",authMiddleware, async (req, res) => {
+
     try {
-        const deletedEvent = await Event.findByIdAndDelete(
-            req.params.id
-        );
+
+        const deletedEvent =
+            await Event.findByIdAndDelete(
+                req.params.id
+            );
 
         if (!deletedEvent) {
+
             return res.status(404).json({
                 message: "Event Not Found!"
             });
         }
 
-        res.json({
+        res.status(200).json({
             message: "Event Deleted Successfully"
         });
+
     } catch (error) {
-        console.log(error);
 
         res.status(500).json({
-            message: "Error deleting event"
+            message: "Error deleting event",
+            error: error.message
         });
     }
 });
 
-
-// =======================
-// REGISTER USER
-// =======================
+// ===============================
+// REGISTER
+// ===============================
 
 app.post("/api/register", async (req, res) => {
+
     try {
+
         const { name, email, password } = req.body;
 
         if (!name || !email || !password) {
+
             return res.status(400).json({
-                message: "All fields are required"
+                message:
+                    "Name, email and password are required!"
             });
         }
 
-        const existingUser = await User.findOne({ email });
+        const cleanEmail =
+            email.trim().toLowerCase();
+
+        const existingUser =
+            await User.findOne({
+                email: cleanEmail
+            });
 
         if (existingUser) {
+
             return res.status(400).json({
-                message: "Email already registered"
+                message: "User already exists!"
             });
         }
 
+        const hashedPassword =
+            await bcrypt.hash(password, 10);
+
         const newUser = new User({
-            name,
-            email,
-            password
+            name: name.trim(),
+            email: cleanEmail,
+            password: hashedPassword
         });
 
         await newUser.save();
 
+        console.log(
+            "User registered:",
+            newUser.email
+        );
+
         res.status(201).json({
-            message: "User Registered Successfully!",
-            user: newUser
+
+            message:
+                "User Registered Successfully!",
+
+            user: {
+                id: newUser._id,
+                name: newUser.name,
+                email: newUser.email
+            }
         });
 
     } catch (error) {
-        console.log("Register Error:", error);
+
+        console.log(
+            "Registration Error:",
+            error.message
+        );
 
         res.status(500).json({
-            message: "Server error"
+            message: "Registration failed",
+            error: error.message
         });
     }
 });
 
-
-// =======================
-// LOGIN USER
-// =======================
+// ===============================
+// LOGIN
+// ===============================
 
 app.post("/api/login", async (req, res) => {
+
     try {
+
         const { email, password } = req.body;
 
+        console.log("Login request received");
+
+        // Check input
         if (!email || !password) {
+
             return res.status(400).json({
-                message: "Email and password are required"
+                message:
+                    "Email and password are required!"
             });
         }
 
-        const user = await User.findOne({ email });
+        // Check JWT secret
+        if (!process.env.JWT_SECRET) {
+
+            console.log(
+                "ERROR: JWT_SECRET is missing"
+            );
+
+            return res.status(500).json({
+                message:
+                    "JWT_SECRET is missing in .env"
+            });
+        }
+
+        const cleanEmail =
+            email.trim().toLowerCase();
+
+        // Find user
+        const user =
+            await User.findOne({
+                email: cleanEmail
+            });
 
         if (!user) {
+
+            console.log(
+                "User not found:",
+                cleanEmail
+            );
+
             return res.status(401).json({
-                message: "Invalid email or password"
+                message:
+                    "Invalid Email or Password!"
             });
         }
 
-        if (user.password !== password) {
+        console.log(
+            "User found:",
+            user.email
+        );
+
+        // Compare password
+        const passwordMatch =
+            await bcrypt.compare(
+                password,
+                user.password
+            );
+
+        if (!passwordMatch) {
+
+            console.log(
+                "Password does not match"
+            );
+
             return res.status(401).json({
-                message: "Invalid email or password"
+                message:
+                    "Invalid Email or Password!"
             });
         }
+
+        console.log(
+            "Password matched successfully"
+        );
+
+        // ===============================
+        // GENERATE TOKEN
+        // ===============================
 
         const token = jwt.sign(
+
             {
-                userId: user._id,
+                userId: user._id.toString(),
                 email: user.email
             },
+
             process.env.JWT_SECRET,
+
             {
                 expiresIn: "1h"
             }
         );
 
-        res.json({
-            message: "Login successful",
+        console.log(
+            "JWT generated successfully"
+        );
+
+        console.log(
+            "Token:",
+            token
+        );
+
+        // ===============================
+        // SEND TOKEN
+        // ===============================
+
+        return res.status(200).json({
+
+            message:
+                "Login Successful!",
+
             token: token,
-            user: user
+
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email
+            }
         });
 
     } catch (error) {
-        console.log("Login Error:", error);
 
-        res.status(500).json({
-            message: "Server error"
+        console.log(
+            "Login Error:",
+            error.message
+        );
+
+        return res.status(500).json({
+
+            message:
+                "Login failed",
+
+            error:
+                error.message
         });
     }
 });
 
+// ===============================
+// PROTECTED TEST ROUTE
+// ===============================
 
-// =======================
-// PROFILE
-// =======================
+app.get(
+    "/api/protected",
+    verifyToken,
+    (req, res) => {
 
-app.get("/api/profile", authMiddlewaren, (req, res) => {
-    res.json({
-        message: "You are authenticated",
-        user: req.user
-    });
+        res.status(200).json({
+
+            message:
+                "You accessed a protected route!",
+
+            user:
+                req.user
+        });
+    }
+);
+
+// ===============================
+// TEST TOKEN
+// ===============================
+
+app.get("/api/test-token", (req, res) => {
+
+    try {
+
+        if (!process.env.JWT_SECRET) {
+
+            return res.status(500).json({
+                message:
+                    "JWT_SECRET is missing"
+            });
+        }
+
+        const token = jwt.sign(
+
+            {
+                test: "hello"
+            },
+
+            process.env.JWT_SECRET,
+
+            {
+                expiresIn: "1h"
+            }
+        );
+
+        res.status(200).json({
+
+            message:
+                "Token generated successfully",
+
+            token: token
+        });
+
+    } catch (error) {
+
+        res.status(500).json({
+
+            message:
+                "Token generation failed",
+
+            error:
+                error.message
+        });
+    }
 });
 
-
-// =======================
+// ===============================
 // START SERVER
-// =======================
+// ===============================
 
-app.listen(5000, () => {
-    console.log("Server is running on port 5000");
+const PORT =
+    process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+
+    console.log(
+        `Server is running on port ${PORT}`
+    );
+
 });
