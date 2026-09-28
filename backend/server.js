@@ -4,11 +4,11 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const dns = require("dns");
-const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const Event = require("./models/Event");
 const User = require("./models/User");
+const authMiddlewaren = require("./middleware/authMiddleware");
 
 const app = express();
 
@@ -21,14 +21,14 @@ dns.setServers(["8.8.8.8"]);
 // MongoDB Connection
 // =======================
 
-mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => {
-        console.log("MongoDB Connected Successfully!");
-    })
-    .catch((error) => {
-        console.log("MongoDB Connection Error:", error);
-    });
+mongoose.connect(process.env.MONGO_URI)
+.then(() => {
+    console.log("MongoDB Connected Successfully!");
+})
+.catch((error) => {
+    console.log("MongoDB Connection Error: ", error);
+});
+
 
 // =======================
 // Home Route
@@ -37,6 +37,7 @@ mongoose
 app.get("/", (req, res) => {
     res.send("Backend is working");
 });
+
 
 // =======================
 // GET ALL EVENTS
@@ -48,45 +49,20 @@ app.get("/api/events", async (req, res) => {
 
         res.json(events);
     } catch (error) {
+        console.log(error);
+
         res.status(500).json({
-            message: "Error fetching events",
-            error: error.message
+            message: "Error fetching events"
         });
     }
 });
 
-// =======================
-// DELETE EVENT
-// =======================
-
-app.delete("/api/events/:id", async (req, res) => {
-    try {
-        const deletedEvent = await Event.findByIdAndDelete(
-            req.params.id
-        );
-
-        if (!deletedEvent) {
-            return res.status(404).json({
-                message: "Event Not Found!"
-            });
-        }
-
-        res.json({
-            message: "Event Deleted Successfully"
-        });
-    } catch (error) {
-        res.status(500).json({
-            message: "Error deleting event",
-            error: error.message
-        });
-    }
-});
 
 // =======================
 // ADD EVENT
 // =======================
 
-app.post("/api/events", async (req, res) => {
+app.post("/api/events", authMiddlewaren, async (req, res) => {
     try {
         const newEvent = await Event.create(req.body);
 
@@ -95,12 +71,14 @@ app.post("/api/events", async (req, res) => {
             event: newEvent
         });
     } catch (error) {
+        console.log(error);
+
         res.status(500).json({
-            message: "Error adding event",
-            error: error.message
+            message: "Error adding event"
         });
     }
 });
+
 
 // =======================
 // UPDATE EVENT
@@ -125,12 +103,43 @@ app.put("/api/events/:id", async (req, res) => {
             event: updatedEvent
         });
     } catch (error) {
+        console.log(error);
+
         res.status(500).json({
-            message: "Error updating event",
-            error: error.message
+            message: "Error updating event"
         });
     }
 });
+
+
+// =======================
+// DELETE EVENT
+// =======================
+
+app.delete("/api/events/:id", async (req, res) => {
+    try {
+        const deletedEvent = await Event.findByIdAndDelete(
+            req.params.id
+        );
+
+        if (!deletedEvent) {
+            return res.status(404).json({
+                message: "Event Not Found!"
+            });
+        }
+
+        res.json({
+            message: "Event Deleted Successfully"
+        });
+    } catch (error) {
+        console.log(error);
+
+        res.status(500).json({
+            message: "Error deleting event"
+        });
+    }
+});
+
 
 // =======================
 // REGISTER USER
@@ -142,7 +151,7 @@ app.post("/api/register", async (req, res) => {
 
         if (!name || !email || !password) {
             return res.status(400).json({
-                message: "Name, email and password are required!"
+                message: "All fields are required"
             });
         }
 
@@ -150,35 +159,32 @@ app.post("/api/register", async (req, res) => {
 
         if (existingUser) {
             return res.status(400).json({
-                message: "User already exists!"
+                message: "Email already registered"
             });
         }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
 
         const newUser = new User({
             name,
             email,
-            password: hashedPassword
+            password
         });
 
         await newUser.save();
 
         res.status(201).json({
             message: "User Registered Successfully!",
-            user: {
-                id: newUser._id,
-                name: newUser.name,
-                email: newUser.email
-            }
+            user: newUser
         });
+
     } catch (error) {
+        console.log("Register Error:", error);
+
         res.status(500).json({
-            message: "Registration failed",
-            error: error.message
+            message: "Server error"
         });
     }
 });
+
 
 // =======================
 // LOGIN USER
@@ -190,7 +196,7 @@ app.post("/api/login", async (req, res) => {
 
         if (!email || !password) {
             return res.status(400).json({
-                message: "Email and password are required!"
+                message: "Email and password are required"
             });
         }
 
@@ -198,28 +204,13 @@ app.post("/api/login", async (req, res) => {
 
         if (!user) {
             return res.status(401).json({
-                message: "Invalid Email or Password!"
+                message: "Invalid email or password"
             });
         }
 
-        const passwordMatch = await bcrypt.compare(
-            password,
-            user.password
-        );
-
-        if (!passwordMatch) {
+        if (user.password !== password) {
             return res.status(401).json({
-                message: "Invalid Email or Password!"
-            });
-        }
-
-        // =======================
-        // Generate JWT Token
-        // =======================
-
-        if (!process.env.JWT_SECRET) {
-            return res.status(500).json({
-                message: "JWT_SECRET is missing in .env file"
+                message: "Invalid email or password"
             });
         }
 
@@ -234,28 +225,33 @@ app.post("/api/login", async (req, res) => {
             }
         );
 
-        // =======================
-        // Send Response
-        // =======================
-
         res.json({
-            message: "Login Successful!",
+            message: "Login successful",
             token: token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email
-            }
+            user: user
         });
+
     } catch (error) {
         console.log("Login Error:", error);
 
         res.status(500).json({
-            message: "Login failed",
-            error: error.message
+            message: "Server error"
         });
     }
 });
+
+
+// =======================
+// PROFILE
+// =======================
+
+app.get("/api/profile", authMiddlewaren, (req, res) => {
+    res.json({
+        message: "You are authenticated",
+        user: req.user
+    });
+});
+
 
 // =======================
 // START SERVER
